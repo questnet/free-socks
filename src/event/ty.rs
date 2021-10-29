@@ -111,7 +111,7 @@ mod tests {
     }
 
     #[test]
-    fn parsing_event_type_with_shouty_case() {
+    fn parsing_event_type_from_shouty_snake_case() {
         assert_eq!(
             EventType::from_str("CHANNEL_STATE"),
             Ok(EventType::ChannelState)
