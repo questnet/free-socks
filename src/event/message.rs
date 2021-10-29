@@ -3,17 +3,18 @@ use anyhow::{anyhow, bail, Result};
 use mime::Mime;
 use std::{
     error::Error,
+    io::Write,
     str::{self, FromStr},
 };
 
 #[derive(Clone, Default, Debug)]
-pub struct Event {
+pub struct Message {
     pub headers: Headers,
     pub content: Option<Content>,
 }
 
 /// Convenience functions.
-impl Event {
+impl Message {
     /// Expects the given content type.
     ///
     /// Returns an error if the `Content-Type` header is not set or another content type was found.
@@ -48,6 +49,16 @@ impl Event {
         self.headers
             .parsed(name)?
             .ok_or_else(|| anyhow!("Expect header `{}`", name))
+    }
+
+    pub fn write(&self, writer: &mut dyn Write) -> Result<()> {
+        self.headers.write(writer)?;
+        if let Some(content) = &self.content {
+            // TODO: how should we handle Content-Type and Content-Length, should they be implicitly
+            // included in the headers, and how can we make sure of that?
+            content.write(writer)?;
+        }
+        Ok(())
     }
 }
 
@@ -85,10 +96,20 @@ impl Headers {
     {
         let name = name.as_ref();
         if let Some(value) = self.value(name) {
-            Ok(Some(name.parse::<T>()?))
+            Ok(Some(value.parse::<T>()?))
         } else {
             Ok(None)
         }
+    }
+
+    /// Write headers to a binary stream.
+    pub fn write(&self, writer: &mut dyn Write) -> Result<()> {
+        for header in &self.0 {
+            header.write(writer)?;
+            writer.write_all(&[LF])?;
+        }
+        writer.write_all(&[LF])?;
+        Ok(())
     }
 }
 
@@ -129,8 +150,24 @@ pub struct Header {
     pub value: String,
 }
 
+impl Header {
+    pub fn write(&self, writer: &mut dyn Write) -> Result<()> {
+        writer.write_all(self.name.as_bytes())?;
+        writer.write_all(": ".as_bytes())?;
+        writer.write_all(self.value.as_bytes())?;
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Content {
     pub ty: Mime,
     pub data: Vec<u8>,
+}
+
+impl Content {
+    pub fn write(&self, writer: &mut dyn Write) -> Result<()> {
+        writer.write_all(&self.data)?;
+        Ok(())
+    }
 }

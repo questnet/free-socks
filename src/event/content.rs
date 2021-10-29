@@ -1,4 +1,4 @@
-use crate::{FromEvent, ThenSome};
+use crate::{FromMessage, ThenSome};
 use anyhow::Result;
 use mime::Mime;
 use regex::Regex;
@@ -10,8 +10,8 @@ pub struct CommandReply {
     pub reply_text: ReplyText,
 }
 
-impl FromEvent for CommandReply {
-    fn from_event(event: &crate::Event) -> anyhow::Result<Self> {
+impl FromMessage for CommandReply {
+    fn from_event(event: &crate::Message) -> anyhow::Result<Self> {
         // TODO: Pre-create well known Mime types.
         event.expect_content_type(Mime::from_str("command/reply")?)?;
         let reply_text: ReplyText = event.get("Reply-Text")?;
@@ -25,10 +25,9 @@ pub enum ReplyText {
     Err(Option<String>),
 }
 
-/// A simple parse error.
+/// A parse error.
 ///
-/// That's because we can't return [`anyhow::Result`] from [`FromStr::from_str`].
-/// See
+/// That's because we can't return [`anyhow::Result`] from [`FromStr::from_str`]:
 ///
 /// - https://github.com/dtolnay/anyhow/pull/163
 /// - https://github.com/dtolnay/anyhow/issues/172

@@ -8,9 +8,9 @@ mod inbound_socket;
 // Exports
 //
 
-pub use event::event::{Content, Event, Header, Headers};
+pub use event::message::{Content, Message, Header, Headers};
 pub use event::ty::EventType;
-pub use event::FromEvent;
+pub use event::FromMessage;
 pub use inbound_socket::InboundSocket;
 
 //

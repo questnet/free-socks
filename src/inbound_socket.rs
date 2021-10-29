@@ -9,7 +9,7 @@
 //! sender push both to the same queue which gets processed by a driver.
 use crate::{
     event::{CommandReply, ReplyText},
-    sequence, Content, Event, FromEvent, Headers, LF,
+    sequence, Content, FromMessage, Headers, Message, LF,
 };
 use anyhow::{bail, Result};
 use log::debug;
@@ -20,7 +20,7 @@ use std::{
     str::{self},
 };
 use tokio::{
-    io::AsyncReadExt,
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpStream,
@@ -54,6 +54,8 @@ impl InboundSocket {
 
         let (tcp_receive, tcp_write) = {
             let tcp = TcpStream::connect(addr.into()).await?;
+            // Send packages out as soon as possible.
+            tcp.set_nodelay(true)?;
             tcp.into_split()
         };
 
@@ -130,9 +132,9 @@ impl InboundSocket {
 
     /// Send a blocking api command.
     ///
-    /// Returns in an error if the returned [`Event`] does not contain a `api/response` content
+    /// Returns in an error if the returned [`Message`] does not contain a `api/response` content
     /// block.
-    pub async fn api(&self, cmd: impl AsRef<str>) -> Result<Event> {
+    pub async fn api(&self, cmd: impl AsRef<str>) -> Result<Message> {
         let cmd = cmd.as_ref();
         // TODO: Don't support cmd with LFs
         // TODO: encode cmd?
@@ -149,10 +151,11 @@ impl InboundSocket {
     ///
     /// This function does not implement protocol error handling. It returns the answer [`Event`] as
     /// it is without looking into it.
-    pub async fn send(&self, cmd: impl AsRef<str>) -> Result<Event> {
+    pub async fn send(&self, cmd: impl AsRef<str>) -> Result<Message> {
         let (tx, rx) = oneshot::channel();
         let command = Command::Blocking {
             cmd: cmd.as_ref().to_owned(),
+            message: Message::default(),
             responder: tx,
         };
         self.send_command(command).await?;
@@ -173,21 +176,22 @@ impl InboundSocket {
 enum Command {
     Blocking {
         cmd: String,
-        responder: oneshot::Sender<Event>,
+        message: Message,
+        responder: oneshot::Sender<Message>,
     },
     Background {
         cmd: String,
-        responder: oneshot::Sender<Event>,
+        responder: oneshot::Sender<Message>,
     },
     Application {
         cmd: String,
-        responder: mpsc::Sender<Event>,
+        responder: mpsc::Sender<Message>,
     },
 }
 
 #[derive(Debug)]
 enum DriverMessage {
-    Event(Event),
+    Event(Message),
     Command(Command),
 }
 
@@ -199,9 +203,9 @@ struct Driver {
 
 #[derive(Default, Debug)]
 struct DriverState {
-    blocking: VecDeque<oneshot::Sender<Event>>,
-    background: HashMap<Uuid, oneshot::Sender<Event>>,
-    application: HashMap<Uuid, mpsc::Sender<Event>>,
+    blocking: VecDeque<oneshot::Sender<Message>>,
+    background: HashMap<Uuid, oneshot::Sender<Message>>,
+    application: HashMap<Uuid, mpsc::Sender<Message>>,
 }
 
 impl Driver {
@@ -215,9 +219,13 @@ impl Driver {
         use DriverMessage::*;
         match message {
             Event(e) => self.process_event(e)?,
-            Command(Blocking { cmd, responder }) => {
+            Command(Blocking {
+                cmd,
+                message,
+                responder,
+            }) => {
                 self.state.blocking.push_back(responder);
-                self.send_blocking(&cmd).await?;
+                self.send_blocking(&cmd, &message).await?;
             }
             Command(Background { cmd, responder }) => {
                 let uuid = Uuid::new_v4();
@@ -232,7 +240,25 @@ impl Driver {
         Ok(())
     }
 
-    async fn send_blocking(&mut self, cmd: &str) -> Result<()> {
+    async fn send_blocking(&mut self, cmd: &str, message: &Message) -> Result<()> {
+        // We first write to an internal buffer, and then write to the socket and flush it
+        // immediately after to get the data out as soon as possible (see `TcpStream::set_nodelay`).
+        // TODO: recycle the write buffer?
+        // TODO: pre-compute the capacity?
+        // TODO: write directly to TcpStream? (does it have a send buffer)?
+        let buf = {
+            let mut buf = Vec::new();
+            buf.extend_from_slice(cmd.as_bytes());
+            buf.push(LF);
+            message.write(&mut buf)?;
+            buf
+        };
+
+        {
+            self.writer.write_all(&buf).await?;
+            self.writer.flush().await?;
+        }
+
         Ok(())
     }
 
@@ -240,11 +266,11 @@ impl Driver {
         Ok(())
     }
 
-    async fn send(&mut self, cmd: &str, attachment: Event) -> Result<()> {
+    async fn send(&mut self, cmd: &str, attachment: Message) -> Result<()> {
         Ok(())
     }
 
-    fn process_event(&mut self, event: Event) -> Result<()> {
+    fn process_event(&mut self, event: Message) -> Result<()> {
         Ok(())
     }
 }
@@ -258,13 +284,7 @@ struct EventReader {
 }
 
 impl EventReader {
-    async fn run(&mut self) -> Result<()> {
-        loop {
-            let event = self.read_event().await?;
-        }
-    }
-
-    async fn read_event(&mut self) -> Result<Event> {
+    async fn read_event(&mut self) -> Result<Message> {
         let headers = self.read_headers().await?;
         let content = {
             if let Some((ty, len)) = headers.content()? {
@@ -275,7 +295,7 @@ impl EventReader {
             }
         };
 
-        Ok(Event { headers, content })
+        Ok(Message { headers, content })
     }
 
     async fn read_headers(&mut self) -> Result<Headers> {
@@ -286,7 +306,7 @@ impl EventReader {
     /// Reads until the given bytes have been received. `len` may be 0 which immediately returns an
     /// empty slice.
     async fn read_data(&mut self, len: usize) -> Result<&[u8]> {
-        self.flush_read_buffer();
+        self.drain_read_buffer();
 
         if len == 0 {
             // We _do_ support empty content.
@@ -305,7 +325,7 @@ impl EventReader {
 
     /// Reads until two LFs are seen. Returns the block without the two LFs.
     async fn read_block(&mut self) -> Result<&[u8]> {
-        self.flush_read_buffer();
+        self.drain_read_buffer();
         let mut start_search = 0;
 
         if self.read_buffer.is_empty() {
@@ -329,7 +349,8 @@ impl EventReader {
         }
     }
 
-    fn flush_read_buffer(&mut self) {
+    /// Remove the already consumed data from the read buffer.
+    fn drain_read_buffer(&mut self) {
         self.read_buffer.drain(0..self.read_consumed);
         self.read_consumed = 0;
     }

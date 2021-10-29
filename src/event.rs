@@ -1,14 +1,14 @@
-use crate::Event;
+use crate::Message;
 use anyhow::Result;
 
 mod content;
-pub mod event;
 mod filter_manager;
+pub mod message;
 pub mod ty;
 
 pub use content::*;
 
-/// This trait in implemented for types that can be extracted from an [`Event`].
-pub trait FromEvent: Sized {
-    fn from_event(event: &Event) -> Result<Self>;
+/// This trait in implemented for types that can be extracted from an [`Message`].
+pub trait FromMessage: Sized {
+    fn from_event(event: &Message) -> Result<Self>;
 }
