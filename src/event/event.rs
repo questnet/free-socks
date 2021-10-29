@@ -1,7 +1,10 @@
 use crate::{sequence, ThenSome, LF};
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use mime::Mime;
-use std::str;
+use std::{
+    error::Error,
+    str::{self, FromStr},
+};
 
 #[derive(Clone, Default, Debug)]
 pub struct Event {
@@ -9,9 +12,87 @@ pub struct Event {
     pub content: Option<Content>,
 }
 
+/// Convenience functions.
+impl Event {
+    /// Expects the given content type.
+    ///
+    /// Returns an error if the `Content-Type` header is not set or another content type was found.
+    pub fn expect_content_type(&self, expected: impl Into<Mime>) -> Result<()> {
+        let expected = expected.into();
+        let ct = self.content_type()?.ok_or_else(|| {
+            anyhow!(
+                "Expected content type `{}`, but no `Content-Type` header was found",
+                expected
+            )
+        })?;
+        if ct != expected {
+            bail!(
+                "Expected content type `{}`, but instead found `{}`",
+                expected,
+                ct
+            )
+        }
+        Ok(())
+    }
+
+    pub fn content_type(&self) -> Result<Option<Mime>> {
+        self.headers.content_type()
+    }
+
+    pub fn get<T>(&self, name: impl AsRef<str>) -> Result<T>
+    where
+        T: FromStr,
+        T::Err: Error + Send + Sync + 'static,
+    {
+        let name = name.as_ref();
+        self.headers
+            .parsed(name)?
+            .ok_or_else(|| anyhow!("Expect header `{}`", name))
+    }
+}
+
 #[derive(Clone, Default, Debug)]
 pub struct Headers(pub Vec<Header>);
 
+/// Convenience functions.
+impl Headers {
+    pub fn content(&self) -> Result<Option<(Mime, usize)>> {
+        let ty = self.content_type()?;
+        let len = self.content_length()?;
+        match (ty, len) {
+            (None, None) => Ok(None),
+            (Some(_), None) => bail!("Seen `Content-Type` but no `Content-Length`"),
+            (None, Some(_)) => bail!("Seen `Content-Length` but no `Content-Type`"),
+            (Some(ty), Some(len)) => Ok(Some((ty, len))),
+        }
+    }
+
+    pub fn content_type(&self) -> Result<Option<Mime>> {
+        self.parsed("Content-Type")
+    }
+
+    pub fn content_length(&self) -> Result<Option<usize>> {
+        self.parsed("Content-Length")
+    }
+
+    /// Returns a parsed value.
+    ///
+    /// Returns `Ok(None)` if the header was not found. Returns an error if the parsing failed.
+    pub fn parsed<T>(&self, name: impl AsRef<str>) -> Result<Option<T>>
+    where
+        T: FromStr,
+        T::Err: Error + Send + Sync + 'static,
+    {
+        let name = name.as_ref();
+        if let Some(value) = self.value(name) {
+            Ok(Some(name.parse::<T>()?))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+/// Essential functions.
 impl Headers {
     pub fn parse(block: &[u8]) -> Result<Self> {
         let mut headers = Vec::new();
@@ -39,21 +120,6 @@ impl Headers {
         self.0
             .iter()
             .find_map(|h| (h.name == name).then_some(h.value.as_str()))
-    }
-
-    pub fn content(&self) -> Result<Option<(Mime, usize)>> {
-        let ty = self.value("Content-Type");
-        let len = self.value("Content-Length");
-        match (ty, len) {
-            (None, None) => Ok(None),
-            (Some(_), None) => bail!("Seen Content-Type but no Content-Length"),
-            (None, Some(_)) => bail!("Seen Content-Length but no Content-Type"),
-            (Some(ty), Some(len)) => {
-                let ty = ty.parse::<Mime>()?;
-                let len = len.parse::<usize>()?;
-                Ok(Some((ty, len)))
-            }
-        }
     }
 }
 

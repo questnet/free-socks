@@ -8,6 +8,7 @@ edition = "2021"
 futures = "0.3.17"
 tokio = { version = "1.12.0", features = ["net", "io-util", "rt", "sync", "macros"] }
 anyhow = "1.0.44"
+thiserror = "1.0.30"
 log = "0.4.14"
 # Content-Type:
 mime = "0.3.16"
@@ -16,4 +17,5 @@ uuid = { version = "0.8.2", features = ["v4"] }
 
 # EventType enum to string conversion.
 strum = { version = "0.22", features = ["derive"] }
-
+# Simple parsing.
+regex = "1.5.4"

@@ -9,11 +9,12 @@
 //! sender push both to the same queue which gets processed by a driver.
 use anyhow::{bail, Result};
 use log::debug;
+use mime::Mime;
 use std::{
     collections::{HashMap, VecDeque},
     mem::{self},
     net::SocketAddr,
-    str,
+    str::{self, FromStr},
 };
 use tokio::{
     io::AsyncReadExt,
@@ -27,7 +28,10 @@ use tokio::{
 };
 use uuid::Uuid;
 
-use crate::{sequence, Content, Event, Headers, LF};
+use crate::{
+    event::{CommandReply, ReplyText},
+    sequence, Content, Event, FromEvent, Headers, LF,
+};
 
 const BUFFER_SIZE: usize = 0x4000;
 
@@ -106,10 +110,35 @@ impl InboundSocket {
     }
 }
 
-/// "Layer 2" inbound socket send functions.
+/// "Layer 2" inbound socket send functions. Full error handling.
 impl InboundSocket {
-    /// Send a blocking command prefixed with `api`.
+    /// Sends a blocking command.
+    ///
+    /// These all commands except `api` commands. These are expected to return a `Reply-Text`
+    /// header.
+    ///
+    /// - If the reply text starts with `+OK`, returns the info text attached to the Reply-Text`
+    ///   header if any.
+    /// - If the reply text starts with `-ERR`, returns an error.
+    pub async fn command(&self, cmd: impl AsRef<str>) -> Result<Option<String>> {
+        // TODO: consider to predefine all possible commands in an enum?
+        let cmd = cmd.as_ref();
+        let response = self.send(cmd).await?;
+        match CommandReply::from_event(&response)?.reply_text {
+            ReplyText::Ok(info) => Ok(info),
+            ReplyText::Err(info) => bail!("Command `{}` failed: {:?}", cmd, info),
+        }
+    }
+
+    /// Send a blocking api command.
+    ///
+    /// Returns in an error if the returned [`Event`] does not contain a `api/response` content
+    /// block.
     pub async fn api(&self, cmd: impl AsRef<str>) -> Result<Event> {
+        let cmd = cmd.as_ref();
+        // TODO: Don't support cmd with LFs
+        // TODO: encode cmd?
+        let response = self.send(format!("api {}", cmd)).await?;
         todo!()
     }
 }
@@ -120,8 +149,8 @@ impl InboundSocket {
     ///
     /// Don't use `bgapi` here. If so, this function may not return or screws up the internal state.
     ///
-    /// This function does not implement protocol error handling. It returns the answer as it is
-    /// without looking into it.
+    /// This function does not implement protocol error handling. It returns the answer [`Event`] as
+    /// it is without looking into it.
     pub async fn send(&self, cmd: impl AsRef<str>) -> Result<Event> {
         let (tx, rx) = oneshot::channel();
         let command = Command::Blocking {
@@ -129,6 +158,7 @@ impl InboundSocket {
             responder: tx,
         };
         self.send_command(command).await?;
+        // TODO: Support timeouts here?
         Ok(rx.await?)
     }
 

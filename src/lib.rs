@@ -10,6 +10,7 @@ mod inbound_socket;
 
 pub use event::event::{Content, Event, Header, Headers};
 pub use event::ty::EventType;
+pub use event::FromEvent;
 pub use inbound_socket::InboundSocket;
 
 //
