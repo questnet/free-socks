@@ -7,14 +7,17 @@
 //!
 //! To remedy that, a channel mpsc queue based approach was used. The event reader and the command
 //! sender push both to the same queue which gets processed by a driver.
+use crate::{
+    event::{CommandReply, ReplyText},
+    sequence, Content, Event, FromEvent, Headers, LF,
+};
 use anyhow::{bail, Result};
 use log::debug;
-use mime::Mime;
 use std::{
     collections::{HashMap, VecDeque},
     mem::{self},
     net::SocketAddr,
-    str::{self, FromStr},
+    str::{self},
 };
 use tokio::{
     io::AsyncReadExt,
@@ -27,11 +30,6 @@ use tokio::{
     task::JoinHandle,
 };
 use uuid::Uuid;
-
-use crate::{
-    event::{CommandReply, ReplyText},
-    sequence, Content, Event, FromEvent, Headers, LF,
-};
 
 const BUFFER_SIZE: usize = 0x4000;
 
