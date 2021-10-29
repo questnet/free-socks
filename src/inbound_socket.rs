@@ -1,15 +1,14 @@
-//# Low lower inbound socket.
-// ADR:
-// Initially we thought about creating a design that polls the events and the commands at the same
-// time, but it turned out that select! not simple to use on futures that are not cancellation safe
-// (which our event reader isn't, because of the intermediate buffers).
-//
-// To remedy that, a channel mpsc queue based approach was used. The event reader and the command
-// sender push both to the same queue which gets processed by a driver.
-
+//! # FreeSWITCH inbound socket.
+//!
+//! ADR:
+//! Initially we thought about creating a design that polls the events and the commands at the same
+//! time, but it turned out that select! not simple to use on futures that are not cancellation safe
+//! (which our event reader isn't, because of the intermediate buffers).
+//!
+//! To remedy that, a channel mpsc queue based approach was used. The event reader and the command
+//! sender push both to the same queue which gets processed by a driver.
 use anyhow::{bail, Result};
 use log::debug;
-use mime::Mime;
 use std::{
     collections::{HashMap, VecDeque},
     mem::{self},
@@ -28,6 +27,8 @@ use tokio::{
 };
 use uuid::Uuid;
 
+use crate::{sequence, Content, Event, Headers, LF};
+
 const BUFFER_SIZE: usize = 0x4000;
 
 pub struct InboundSocket {
@@ -43,7 +44,6 @@ impl Drop for InboundSocket {
     }
 }
 
-const LF: u8 = b'\n';
 const MAX_QUEUE_SIZE: usize = 256;
 
 impl InboundSocket {
@@ -252,7 +252,7 @@ impl EventReader {
 
     async fn read_headers(&mut self) -> Result<Headers> {
         let block = self.read_block().await?;
-        Ok(Headers::new(&parse_headers(block)?))
+        Ok(Headers::parse(block)?)
     }
 
     /// Reads until the given bytes have been received. `len` may be 0 which immediately returns an
@@ -322,85 +322,5 @@ impl EventReader {
             bail!("Socket receiver closed by peer.")
         };
         Ok(&self.socket_buffer[0..size])
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
-struct Header {
-    name: String,
-    value: String,
-}
-
-fn parse_headers(block: &[u8]) -> Result<Vec<Header>> {
-    let mut headers = Vec::new();
-    const NAME_VALUE_SEPARATOR: &[u8; 2] = b": ";
-    for line in block.split(|b| *b == LF) {
-        if let Some(index) = sequence::find_first(line, NAME_VALUE_SEPARATOR) {
-            if index == 0 {
-                bail!("Empty header name: {}", String::from_utf8_lossy(line))
-            }
-            let name = str::from_utf8(&line[..index])?.to_owned();
-            let value = str::from_utf8(&line[index + NAME_VALUE_SEPARATOR.len()..])?.to_owned();
-            headers.push(Header { name, value })
-        } else {
-            bail!(
-                "Failed to find ': ' separator in header line: {}",
-                String::from_utf8_lossy(line)
-            )
-        }
-    }
-    Ok(headers)
-}
-
-#[derive(Clone, Default, Debug)]
-pub struct Event {
-    headers: Headers,
-    content: Option<Content>,
-}
-
-#[derive(Clone, Default, Debug)]
-struct Headers(Vec<Header>);
-
-impl Headers {
-    pub fn new(headers: &[Header]) -> Headers {
-        Headers(headers.to_vec())
-    }
-
-    pub fn value(&self, name: impl AsRef<str>) -> Option<&str> {
-        let name = name.as_ref();
-        self.0.iter().find_map(|h| {
-            if h.name == name {
-                Some(h.value.as_str())
-            } else {
-                None
-            }
-        })
-    }
-
-    fn content(&self) -> Result<Option<(Mime, usize)>> {
-        let ty = self.value("Content-Type");
-        let len = self.value("Content-Length");
-        match (ty, len) {
-            (None, None) => Ok(None),
-            (Some(_), None) => bail!("Seen Content-Type but no Content-Length"),
-            (None, Some(_)) => bail!("Seen Content-Length but no Content-Type"),
-            (Some(ty), Some(len)) => {
-                let ty = ty.parse::<Mime>()?;
-                let len = len.parse::<usize>()?;
-                Ok(Some((ty, len)))
-            }
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct Content {
-    ty: Mime,
-    data: Vec<u8>,
-}
-
-mod sequence {
-    pub fn find_first(all: &[u8], sequence: &[u8]) -> Option<usize> {
-        all.windows(sequence.len()).position(|w| *w == *sequence)
     }
 }
