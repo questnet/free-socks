@@ -50,10 +50,16 @@ impl FromStr for ReplyText {
         if captures.len() != 3 {
             return Err(ParseError::ParseError(text.to_string()));
         }
-        // match must be exhaustive.
+        // Match must be exhaustive.
         assert_eq!(captures[0].len(), text.len());
+
         let info = {
-            let info = captures[2].trim();
+            let info = &captures[2];
+            if !info.is_empty() && !(info.starts_with(' ')) {
+                // Info, if any, must begin with a space.
+                return Err(ParseError::ParseError(text.to_string()));
+            }
+            let info = info.trim();
             (!info.is_empty()).then_some(info.to_string())
         };
         Ok(match &captures[1] {
@@ -92,5 +98,12 @@ mod tests {
             "+OK  x ".parse::<ReplyText>().unwrap(),
             ReplyText::Ok(Some("x".to_string()))
         );
+    }
+
+    #[test]
+    fn failures() {
+        assert!("+OKx".parse::<ReplyText>().is_err());
+        assert!("-ERRx".parse::<ReplyText>().is_err());
+        assert!("+ERR".parse::<ReplyText>().is_err());
     }
 }
