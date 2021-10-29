@@ -15,6 +15,5 @@ mime = "0.3.16"
 uuid = { version = "0.8.2", features = ["v4"] }
 
 # EventType enum to string conversion.
-strum = { version = "0.22" }
-strum_macros = { version = "0.22" }
+strum = { version = "0.22", features = ["derive"] }
 

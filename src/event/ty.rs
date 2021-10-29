@@ -1,4 +1,4 @@
-use strum_macros::{Display, EnumString};
+use strum::{Display, EnumString};
 
 /// https://freeswitch.org/confluence/display/FREESWITCH/Event+List
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Display, EnumString)]
