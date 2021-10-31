@@ -1,4 +1,4 @@
-use crate::{FromMessage, ThenSome};
+use crate::{FromMessage, Message, ThenSome};
 use anyhow::Result;
 use mime::Mime;
 use regex::Regex;
@@ -11,10 +11,10 @@ pub struct CommandReply {
 }
 
 impl FromMessage for CommandReply {
-    fn from_event(event: &crate::Message) -> anyhow::Result<Self> {
+    fn from_message(message: &Message) -> anyhow::Result<Self> {
         // TODO: Pre-create well known Mime types.
-        event.expect_content_type(Mime::from_str("command/reply")?)?;
-        let reply_text: ReplyText = event.get("Reply-Text")?;
+        message.expect_content_type(Mime::from_str("command/reply")?)?;
+        let reply_text: ReplyText = message.get("Reply-Text")?;
         Ok(CommandReply { reply_text })
     }
 }

@@ -124,7 +124,7 @@ impl InboundSocket {
         // TODO: consider to predefine all possible commands in an enum?
         let cmd = cmd.as_ref();
         let response = self.send(cmd).await?;
-        match CommandReply::from_event(&response)?.reply_text {
+        match CommandReply::from_message(&response)?.reply_text {
             ReplyText::Ok(info) => Ok(info),
             ReplyText::Err(info) => bail!("Command `{}` failed: {:?}", cmd, info),
         }
