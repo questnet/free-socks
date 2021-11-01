@@ -3,6 +3,7 @@ use anyhow::{anyhow, bail, Result};
 use mime::Mime;
 use std::{
     error::Error,
+    fmt,
     io::Write,
     str::{self, FromStr},
 };
@@ -62,8 +63,14 @@ impl Message {
     }
 }
 
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default)]
 pub struct Headers(pub Vec<Header>);
+
+impl fmt::Debug for Headers {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 /// Convenience functions.
 impl Headers {
@@ -143,10 +150,27 @@ impl Headers {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Header {
     pub name: String,
     pub value: String,
+}
+
+impl fmt::Debug for Header {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("")
+            .field(&self.name)
+            .field(&self.value)
+            .finish()
+    }
+}
+
+impl fmt::Display for Header {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.name)?;
+        f.write_str(": ")?;
+        f.write_str(&self.value)
+    }
 }
 
 impl Header {
@@ -158,10 +182,20 @@ impl Header {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Content {
     ty: Mime,
     data: Vec<u8>,
+}
+
+impl fmt::Debug for Content {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let data = std::str::from_utf8(&self.data).unwrap_or(">>>HIDDEN BINARY DATA<<<");
+        f.debug_struct("Content")
+            .field("ty", &self.ty)
+            .field("data", &data)
+            .finish()
+    }
 }
 
 impl Content {
