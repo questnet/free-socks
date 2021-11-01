@@ -19,3 +19,5 @@ uuid = { version = "0.8.2", features = ["v4"] }
 strum = { version = "0.22", features = ["derive"] }
 # Simple parsing.
 regex = "1.5.4"
+# Content Types
+once_cell = "1.8.0"

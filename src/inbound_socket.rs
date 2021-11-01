@@ -8,22 +8,20 @@
 //! To remedy that, a channel mpsc queue based approach was used. The event reader and the command
 //! sender push both to the same queue which gets processed by a driver.
 use crate::{
-    event::{CommandReply, ReplyText},
+    event::{content_types, ApiResponse, AuthRequest, CommandReply, ReplyText},
     sequence, Content, FromMessage, Headers, Message, LF,
 };
-use anyhow::{bail, Result};
-use log::debug;
+use anyhow::{anyhow, bail, Context, Result};
+use log::{debug, error, trace};
 use std::{
     collections::{HashMap, VecDeque},
-    mem::{self},
-    net::SocketAddr,
-    str::{self},
+    mem, str,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpStream,
+        TcpStream, ToSocketAddrs,
     },
     spawn,
     sync::{mpsc, oneshot},
@@ -49,11 +47,11 @@ impl Drop for InboundSocket {
 const MAX_QUEUE_SIZE: usize = 256;
 
 impl InboundSocket {
-    pub async fn connect(addr: impl Into<SocketAddr>) -> Result<InboundSocket> {
+    pub async fn connect(endpoint: impl ToSocketAddrs) -> Result<InboundSocket> {
         let (driver_sender, driver_rx) = mpsc::channel(MAX_QUEUE_SIZE);
 
         let (tcp_receive, tcp_write) = {
-            let tcp = TcpStream::connect(addr.into()).await?;
+            let tcp = TcpStream::connect(endpoint).await?;
             // Send packages out as soon as possible.
             tcp.set_nodelay(true)?;
             tcp.into_split()
@@ -66,16 +64,34 @@ impl InboundSocket {
             read_buffer: Default::default(),
         };
 
+        // Wait for the initial auth/request event.
+        {
+            let initial_event = reader
+                .read_event()
+                .await
+                .context("Reading the initial event")?;
+            AuthRequest::from_message(initial_event).context("Expecting auth/request")?;
+        }
+
+        // Spawn the reader.
         let reader = {
             let driver_sender = driver_sender.clone();
             spawn(async move {
                 loop {
-                    let event = reader.read_event().await?;
-                    driver_sender.send(DriverMessage::Event(event)).await?;
+                    let event = reader.read_event().await;
+                    match event {
+                        Ok(event) => {
+                            driver_sender.send(DriverMessage::Event(event)).await?;
+                        }
+                        Err(e) => {
+                            error!("Failed to read event: {:?}", e)
+                        }
+                    }
                 }
             })
         };
 
+        // Spawn the driver.
         let driver = spawn(async move {
             let mut driver = Driver::new(tcp_write);
             let mut driver_rx = driver_rx;
@@ -103,10 +119,11 @@ impl InboundSocket {
 
 /// "Layer 3" inbound socket commands. Concrete commands, full error handling and result conversion.
 impl InboundSocket {
-    /// Authenticate.
-    pub async fn auth(&self, password: impl AsRef<str>) -> Result<()> {
-        let event = self.api(format!("auth {}", password.as_ref())).await?;
-        todo!();
+    /// Authenticate with a password.
+    ///
+    /// Returns the info string attached to the reply, if any.
+    pub async fn auth(&self, password: impl AsRef<str>) -> Result<Option<String>> {
+        self.command(format!("auth {}", password.as_ref())).await
     }
 }
 
@@ -117,29 +134,29 @@ impl InboundSocket {
     /// These all commands except `api` commands. These are expected to return a `Reply-Text`
     /// header.
     ///
-    /// - If the reply text starts with `+OK`, returns the info text attached to the Reply-Text`
+    /// - If the reply text starts with `+OK`, returns the info text attached to the `Reply-Text`
     ///   header if any.
     /// - If the reply text starts with `-ERR`, returns an error.
     pub async fn command(&self, cmd: impl AsRef<str>) -> Result<Option<String>> {
         // TODO: consider to predefine all possible commands in an enum?
         let cmd = cmd.as_ref();
         let response = self.send(cmd).await?;
-        match CommandReply::from_message(&response)?.reply_text {
+        match CommandReply::from_message(response)?.reply_text {
             ReplyText::Ok(info) => Ok(info),
             ReplyText::Err(info) => bail!("Command `{}` failed: {:?}", cmd, info),
         }
     }
 
-    /// Send a blocking api command.
+    /// Send a blocking `api` command.
     ///
-    /// Returns in an error if the returned [`Message`] does not contain a `api/response` content
+    /// Returns an error if the [`Message`] returned does not contain a `api/response` content
     /// block.
-    pub async fn api(&self, cmd: impl AsRef<str>) -> Result<Message> {
+    pub async fn api(&self, cmd: impl AsRef<str>) -> Result<ApiResponse> {
         let cmd = cmd.as_ref();
         // TODO: Don't support cmd with LFs
         // TODO: encode cmd?
-        let response = self.send(format!("api {}", cmd)).await?;
-        todo!()
+        let message = self.send(format!("api {}", cmd)).await?;
+        Ok(ApiResponse::from_message(message)?)
     }
 }
 
@@ -243,10 +260,10 @@ impl Driver {
     async fn send_blocking(&mut self, cmd: &str, message: &Message) -> Result<()> {
         // We first write to an internal buffer, and then write to the socket and flush it
         // immediately after to get the data out as soon as possible (see `TcpStream::set_nodelay`).
-        // TODO: recycle the write buffer?
-        // TODO: pre-compute the capacity?
-        // TODO: write directly to TcpStream? (does it have a send buffer)?
         let buf = {
+            // TODO: recycle the write buffer?
+            // TODO: pre-compute the capacity?
+            // TODO: write directly to TcpStream (use its send buffer)?
             let mut buf = Vec::new();
             buf.extend_from_slice(cmd.as_bytes());
             buf.push(LF);
@@ -270,8 +287,29 @@ impl Driver {
         Ok(())
     }
 
-    fn process_event(&mut self, event: Message) -> Result<()> {
-        Ok(())
+    fn process_event(&mut self, message: Message) -> Result<()> {
+        trace!("Received message: {:?}", message);
+        // For now we don't support messages without a content type (are there any?).
+        if let Some(content_type) = message.content_type()? {
+            let content_types = content_types();
+            if content_type == content_types.command_reply
+                || content_type == content_types.api_response
+            {
+                return self.process_reply(message);
+            } else {
+                todo!("Unexpected content type: {}", content_type)
+            }
+        }
+        bail!("Received message without a content type.");
+    }
+
+    fn process_reply(&mut self, message: Message) -> Result<()> {
+        if let Some(next) = self.state.blocking.pop_front() {
+            return next
+                .send(message)
+                .map_err(|_m| anyhow!("Failed to reply message"));
+        }
+        bail!("Received a reply message, but without a command / api request that was sent before:\n{:?}", message)
     }
 }
 

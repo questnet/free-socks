@@ -1,6 +1,6 @@
+use super::content_types;
 use crate::{FromMessage, Message, ThenSome};
 use anyhow::Result;
-use mime::Mime;
 use regex::Regex;
 use std::str::FromStr;
 use thiserror::Error;
@@ -11,9 +11,9 @@ pub struct CommandReply {
 }
 
 impl FromMessage for CommandReply {
-    fn from_message(message: &Message) -> anyhow::Result<Self> {
+    fn from_message(message: Message) -> anyhow::Result<Self> {
         // TODO: Pre-create well known Mime types.
-        message.expect_content_type(Mime::from_str("command/reply")?)?;
+        message.expect_content_type(&content_types().command_reply)?;
         let reply_text: ReplyText = message.get("Reply-Text")?;
         Ok(CommandReply { reply_text })
     }

@@ -18,15 +18,14 @@ impl Message {
     /// Expects the given content type.
     ///
     /// Returns an error if the `Content-Type` header is not set or another content type was found.
-    pub fn expect_content_type(&self, expected: impl Into<Mime>) -> Result<()> {
-        let expected = expected.into();
+    pub fn expect_content_type(&self, expected: &Mime) -> Result<()> {
         let ct = self.content_type()?.ok_or_else(|| {
             anyhow!(
                 "Expected content type `{}`, but no `Content-Type` header was found",
                 expected
             )
         })?;
-        if ct != expected {
+        if ct != *expected {
             bail!(
                 "Expected content type `{}`, but instead found `{}`",
                 expected,
@@ -71,9 +70,8 @@ impl Headers {
         let ty = self.content_type()?;
         let len = self.content_length()?;
         match (ty, len) {
-            (None, None) => Ok(None),
-            (Some(_), None) => bail!("Seen `Content-Type` but no `Content-Length`"),
-            (None, Some(_)) => bail!("Seen `Content-Length` but no `Content-Type`"),
+            (_, None) => Ok(None),
+            (None, Some(_)) => bail!("Seen `Content-Length` without a `Content-Type`"),
             (Some(ty), Some(len)) => Ok(Some((ty, len))),
         }
     }
