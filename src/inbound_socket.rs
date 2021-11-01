@@ -102,7 +102,7 @@ impl InboundSocket {
                             continue;
                         }
                         Disconnected(notice) => {
-                            debug!("Received a disconnect notice: {}", notice);
+                            debug!("Received disconnect notice: {}", notice);
                             return Ok(Some(notice));
                         }
                     }
@@ -312,7 +312,7 @@ impl Driver {
     }
 
     fn process_event(&mut self, message: Message) -> Result<ProcessingResult> {
-        trace!("Received message: {:?}", message);
+        trace!("Received: {:?}", message);
         // For now we don't support messages without a content type (are there any?).
         if let Some(content_type) = message.content_type()? {
             let content_types = content_types();
