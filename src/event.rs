@@ -1,5 +1,6 @@
 use crate::Message;
-use anyhow::Result;
+use anyhow::{bail, Result};
+use derive_more::Display;
 use mime::Mime;
 use once_cell::sync::OnceCell;
 use std::str::FromStr;
@@ -26,6 +27,7 @@ pub struct ContentTypes {
     pub command_reply: Mime,
     pub api_response: Mime,
     pub auth_request: Mime,
+    pub disconnect_notice: Mime,
 }
 
 pub fn content_types() -> &'static ContentTypes {
@@ -34,5 +36,20 @@ pub fn content_types() -> &'static ContentTypes {
         command_reply: Mime::from_str("command/reply").unwrap(),
         api_response: Mime::from_str("api/response").unwrap(),
         auth_request: Mime::from_str("auth/request").unwrap(),
+        disconnect_notice: Mime::from_str("text/disconnect-notice").unwrap(),
     })
+}
+
+#[derive(Clone, Debug, Display)]
+pub struct DisconnectNotice(String);
+
+impl FromMessage for DisconnectNotice {
+    fn from_message(message: Message) -> Result<Self> {
+        message.expect_content_type(&content_types().disconnect_notice)?;
+        if let Some(content) = message.content {
+            Ok(Self(content.into_string()?))
+        } else {
+            bail!("Expect disconnect notice, but there is no content block in this message.")
+        }
+    }
 }

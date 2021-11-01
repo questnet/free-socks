@@ -39,6 +39,7 @@ impl Message {
         self.headers.content_type()
     }
 
+    /// Returns a parsed header value.
     pub fn get<T>(&self, name: impl AsRef<str>) -> Result<T>
     where
         T: FromStr,
@@ -159,13 +160,22 @@ impl Header {
 
 #[derive(Clone, Debug)]
 pub struct Content {
-    pub ty: Mime,
-    pub data: Vec<u8>,
+    ty: Mime,
+    data: Vec<u8>,
 }
 
 impl Content {
+    pub fn new(ty: Mime, data: Vec<u8>) -> Self {
+        Self { ty, data }
+    }
+
     pub fn write(&self, writer: &mut dyn Write) -> Result<()> {
         writer.write_all(&self.data)?;
         Ok(())
+    }
+
+    /// Treats the content as a UTF-8 string and returns it.
+    pub fn into_string(self) -> Result<String> {
+        Ok(String::from_utf8(self.data)?)
     }
 }

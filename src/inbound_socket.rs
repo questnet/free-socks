@@ -8,7 +8,7 @@
 //! To remedy that, a channel mpsc queue based approach was used. The event reader and the command
 //! sender push both to the same queue which gets processed by a driver.
 use crate::{
-    event::{content_types, ApiResponse, AuthRequest, CommandReply, ReplyText},
+    event::{content_types, ApiResponse, AuthRequest, CommandReply, DisconnectNotice, ReplyText},
     sequence, Content, FromMessage, Headers, Message, LF,
 };
 use anyhow::{anyhow, bail, Context, Result};
@@ -37,7 +37,7 @@ const BUFFER_SIZE: usize = 0x4000;
 pub struct InboundSocket {
     driver_sender: mpsc::Sender<DriverMessage>,
     reader: JoinHandle<Result<()>>,
-    driver: JoinHandle<Result<()>>,
+    driver: JoinHandle<Result<Option<DisconnectNotice>>>,
 }
 
 impl Drop for InboundSocket {
@@ -96,13 +96,21 @@ impl InboundSocket {
             loop {
                 let message = driver_rx.recv().await;
                 if let Some(message) = message {
-                    driver.process_message(message).await?;
+                    use ProcessingResult::*;
+                    match driver.process_message(message).await? {
+                        Continue => {
+                            continue;
+                        }
+                        Disconnected(notice) => {
+                            debug!("Received a disconnect notice: {}", notice);
+                            return Ok(Some(notice));
+                        }
+                    }
                 } else {
-                    debug!("Driver channel got closed. Ending driver loop.");
-                    break;
+                    debug!("Receiver channel got closed (all senders dropped)");
+                    return Ok(None);
                 }
             }
-            Ok(())
         });
 
         let socket = InboundSocket {
@@ -230,17 +238,25 @@ struct DriverState {
     application: HashMap<Uuid, mpsc::Sender<Message>>,
 }
 
+#[derive(Clone, Debug)]
+enum ProcessingResult {
+    /// Everything is well, processing can continue.
+    Continue,
+    /// Got a disconnect notice from the service.
+    Disconnected(DisconnectNotice),
+}
+
 impl Driver {
     pub fn new(writer: OwnedWriteHalf) -> Self {
         let state = DriverState::default();
         Self { writer, state }
     }
 
-    async fn process_message(&mut self, message: DriverMessage) -> Result<()> {
+    async fn process_message(&mut self, message: DriverMessage) -> Result<ProcessingResult> {
         use self::Command::*;
         use DriverMessage::*;
         match message {
-            Event(e) => self.process_event(e)?,
+            Event(e) => self.process_event(e),
             Command(Blocking {
                 cmd,
                 message,
@@ -248,18 +264,21 @@ impl Driver {
             }) => {
                 self.state.blocking.push_back(responder);
                 self.send_blocking(&cmd, &message).await?;
+                Ok(ProcessingResult::Continue)
             }
             Command(Background { cmd, responder }) => {
                 let uuid = Uuid::new_v4();
                 self.state.background.insert(uuid, responder);
                 self.send_background(&cmd, uuid).await?;
+                Ok(ProcessingResult::Continue)
             }
-            Command(Application { cmd, responder }) => {
+            Command(Application {
+                cmd: _,
+                responder: _,
+            }) => {
                 todo!("Unsupported");
             }
         }
-
-        Ok(())
     }
 
     async fn send_blocking(&mut self, cmd: &str, message: &Message) -> Result<()> {
@@ -292,7 +311,7 @@ impl Driver {
         Ok(())
     }
 
-    fn process_event(&mut self, message: Message) -> Result<()> {
+    fn process_event(&mut self, message: Message) -> Result<ProcessingResult> {
         trace!("Received message: {:?}", message);
         // For now we don't support messages without a content type (are there any?).
         if let Some(content_type) = message.content_type()? {
@@ -300,10 +319,16 @@ impl Driver {
             if content_type == content_types.command_reply
                 || content_type == content_types.api_response
             {
-                return self.process_reply(message);
-            } else {
-                todo!("Unexpected content type: {}", content_type)
+                self.process_reply(message)?;
+                return Ok(ProcessingResult::Continue);
             }
+
+            if content_type == content_types.disconnect_notice {
+                let notice = DisconnectNotice::from_message(message)?;
+                return Ok(ProcessingResult::Disconnected(notice));
+            }
+
+            todo!("Unexpected content type: {}", content_type)
         }
         bail!("Received message without a content type.");
     }
@@ -332,7 +357,7 @@ impl EventReader {
         let content = {
             if let Some((ty, len)) = headers.content()? {
                 let data = self.read_data(len).await?.to_vec();
-                Some(Content { ty, data })
+                Some(Content::new(ty, data))
             } else {
                 None
             }
