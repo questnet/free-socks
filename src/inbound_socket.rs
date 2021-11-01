@@ -24,7 +24,10 @@ use tokio::{
         TcpStream, ToSocketAddrs,
     },
     spawn,
-    sync::{mpsc, oneshot},
+    sync::{
+        mpsc::{self, Sender},
+        oneshot,
+    },
     task::JoinHandle,
 };
 use uuid::Uuid;
@@ -73,21 +76,16 @@ impl InboundSocket {
             AuthRequest::from_message(initial_event).context("Expecting auth/request")?;
         }
 
-        // Spawn the reader.
+        // Spawn the event reader.
         let reader = {
             let driver_sender = driver_sender.clone();
             spawn(async move {
-                loop {
-                    let event = reader.read_event().await;
-                    match event {
-                        Ok(event) => {
-                            driver_sender.send(DriverMessage::Event(event)).await?;
-                        }
-                        Err(e) => {
-                            error!("Failed to read event: {:?}", e)
-                        }
-                    }
+                let r = dispatch_events(&mut reader, driver_sender).await;
+                if let Err(ref e) = r {
+                    error!("Reader loop crashed: {}", e);
                 }
+                debug!("Ending reader loop");
+                r
             })
         };
 
@@ -114,6 +112,13 @@ impl InboundSocket {
         };
 
         Ok(socket)
+    }
+}
+
+async fn dispatch_events(reader: &mut EventReader, driver: Sender<DriverMessage>) -> Result<()> {
+    loop {
+        let event = reader.read_event().await?;
+        driver.send(DriverMessage::Event(event)).await?;
     }
 }
 
