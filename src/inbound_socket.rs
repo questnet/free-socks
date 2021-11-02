@@ -401,7 +401,7 @@ impl<R: AsyncRead + Unpin> EventReader<R> {
         }
 
         loop {
-            if self.read_buffer.len() <= len {
+            if self.read_buffer.len() >= len {
                 self.read_consumed = len;
                 return Ok(&self.read_buffer[..len]);
             }
@@ -510,5 +510,23 @@ mod tests {
         assert_eq!(read, b"a");
         let read = reader.read_block().await;
         assert!(read.is_err());
+    }
+
+    #[tokio::test]
+    async fn read_data_spans_two_packets() {
+        let mock = io::Builder::new().read(b"a").read(b"b").build();
+        let mut reader = EventReader::new(mock);
+        let read = reader.read_data(2).await.unwrap();
+        assert_eq!(read, b"ab");
+    }
+
+    #[tokio::test]
+    async fn read_data_reads_twice_from_one_packet() {
+        let mock = io::Builder::new().read(b"ab").build();
+        let mut reader = EventReader::new(mock);
+        let read1 = reader.read_data(1).await.unwrap();
+        assert_eq!(read1, b"a");
+        let read2 = reader.read_data(1).await.unwrap();
+        assert_eq!(read2, b"b");
     }
 }
