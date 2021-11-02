@@ -489,4 +489,14 @@ mod tests {
         let read = reader.read_block().await.unwrap();
         assert_eq!(read, b"b");
     }
+
+    #[tokio::test]
+    async fn reader_fails_with_0_bytes() {
+        let mock = io::Builder::new().read(b"a\n\n").read(b"").build();
+        let mut reader = EventReader::new(mock);
+        let read = reader.read_block().await.unwrap();
+        assert_eq!(read, b"a");
+        let read = reader.read_block().await;
+        assert!(read.is_err());
+    }
 }
