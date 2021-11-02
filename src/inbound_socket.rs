@@ -189,8 +189,8 @@ impl InboundSocket {
     ///
     /// Don't use `bgapi` here. If so, this function may not return or screws up the internal state.
     ///
-    /// This function does not implement protocol error handling. It returns the answer [`Event`] as
-    /// it is without looking into it.
+    /// This function does not implement protocol error handling. It returns the answer [`Message`]
+    /// as is without looking into it.
     pub async fn send(&self, cmd: impl AsRef<str>) -> Result<Message> {
         let (tx, rx) = oneshot::channel();
         let command = Command::Blocking {
