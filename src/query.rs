@@ -86,3 +86,13 @@ impl Count {
         Ok(row_count.into())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Table;
+
+    #[test]
+    fn row_count_0_and_no_rows() {
+        let table = Table::from_json(br#"{"row_count":0}"#).is_ok();
+    }
+}
