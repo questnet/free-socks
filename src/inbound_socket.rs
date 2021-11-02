@@ -18,7 +18,7 @@ use std::{
     mem, str,
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
     net::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpStream, ToSocketAddrs,
@@ -60,12 +60,7 @@ impl InboundSocket {
             tcp.into_split()
         };
 
-        let mut reader = EventReader {
-            read: tcp_receive,
-            socket_buffer: [0; BUFFER_SIZE],
-            read_consumed: 0,
-            read_buffer: Default::default(),
-        };
+        let mut reader = EventReader::new(tcp_receive);
 
         // Wait for the initial auth/request event.
         {
@@ -123,7 +118,10 @@ impl InboundSocket {
     }
 }
 
-async fn dispatch_events(reader: &mut EventReader, driver: Sender<DriverMessage>) -> Result<()> {
+async fn dispatch_events(
+    reader: &mut EventReader<OwnedReadHalf>,
+    driver: Sender<DriverMessage>,
+) -> Result<()> {
     loop {
         let event = reader.read_event().await?;
         driver.send(DriverMessage::Event(event)).await?;
@@ -343,15 +341,24 @@ impl Driver {
     }
 }
 
-struct EventReader {
-    read: OwnedReadHalf,
+struct EventReader<R: AsyncRead + Unpin> {
+    read: R,
     socket_buffer: [u8; BUFFER_SIZE],
     // The number of bytes already consumed from the read_buffer.
     read_consumed: usize,
     read_buffer: Vec<u8>,
 }
 
-impl EventReader {
+impl<R: AsyncRead + Unpin> EventReader<R> {
+    fn new(read: R) -> Self {
+        Self {
+            read,
+            socket_buffer: [0; BUFFER_SIZE],
+            read_consumed: 0,
+            read_buffer: Default::default(),
+        }
+    }
+
     async fn read_event(&mut self) -> Result<Message> {
         let headers = self.read_headers().await?;
         let content = {
@@ -410,7 +417,7 @@ impl EventReader {
                 return Ok(&self.read_buffer[..block_size]);
             } else {
                 // Start search after the last sequence that hasn't matched.
-                start_search = self.read_buffer.len() - sequence.len() + 1;
+                start_search = self.read_buffer.len() - (sequence.len() - 1);
             }
 
             self.read_more().await?;
@@ -439,5 +446,47 @@ impl EventReader {
             bail!("Socket receiver closed by peer.")
         };
         Ok(&self.socket_buffer[0..size])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_test::io;
+
+    #[tokio::test]
+    async fn reading_block_lf_lf() {
+        let mock = io::Builder::new().read(b"\n").read(b"\n").build();
+        let mut reader = EventReader::new(mock);
+        let read = reader.read_block().await.unwrap();
+        assert_eq!(read, &[]);
+    }
+
+    #[tokio::test]
+    async fn read_block_content_lf_lf() {
+        let mock = io::Builder::new().read(b"xxxx\n").read(b"\n").build();
+        let mut reader = EventReader::new(mock);
+        let read = reader.read_block().await.unwrap();
+        assert_eq!(read, b"xxxx");
+    }
+
+    #[tokio::test]
+    async fn read_two_blocks() {
+        let mock = io::Builder::new().read(b"a\n\n").read(b"b\n\n").build();
+        let mut reader = EventReader::new(mock);
+        let read = reader.read_block().await.unwrap();
+        assert_eq!(read, b"a");
+        let read = reader.read_block().await.unwrap();
+        assert_eq!(read, b"b");
+    }
+
+    #[tokio::test]
+    async fn read_two_blocks_combined() {
+        let mock = io::Builder::new().read(b"a\n\nb\n\n").build();
+        let mut reader = EventReader::new(mock);
+        let read = reader.read_block().await.unwrap();
+        assert_eq!(read, b"a");
+        let read = reader.read_block().await.unwrap();
+        assert_eq!(read, b"b");
     }
 }
