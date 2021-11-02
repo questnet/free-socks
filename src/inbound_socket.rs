@@ -9,7 +9,7 @@
 //! sender push both to the same queue which gets processed by a driver.
 use crate::{
     event::{content_types, ApiResponse, AuthRequest, CommandReply, DisconnectNotice, ReplyText},
-    sequence, Content, FromMessage, Headers, Message, LF,
+    query, sequence, Content, FromMessage, Headers, Message, LF,
 };
 use anyhow::{anyhow, bail, Context, Result};
 use log::{debug, error, trace};
@@ -135,6 +135,18 @@ impl InboundSocket {
     /// Returns the info string attached to the reply, if any.
     pub async fn auth(&self, password: impl AsRef<str>) -> Result<Option<String>> {
         self.command(format!("auth {}", password.as_ref())).await
+    }
+
+    /// All channels in form of a [`QueryTable`].
+    pub async fn channels(&self) -> Result<query::Table> {
+        let result = self.api("show channels as json").await?;
+        Ok(query::Table::from_json(result.content.as_ref())?)
+    }
+
+    /// The number of channels.
+    pub async fn channels_count(&self) -> Result<usize> {
+        let result = self.api("show channels count as json").await?;
+        Ok(query::Count::from_json(result.content.as_ref())?.into())
     }
 }
 
@@ -459,7 +471,7 @@ mod tests {
         let mock = io::Builder::new().read(b"\n").read(b"\n").build();
         let mut reader = EventReader::new(mock);
         let read = reader.read_block().await.unwrap();
-        assert_eq!(read, &[]);
+        assert_eq!(read, &[0u8; 0]);
     }
 
     #[tokio::test]
@@ -491,7 +503,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reader_fails_with_0_bytes() {
+    async fn reader_fails_with_empty_read_result() {
         let mock = io::Builder::new().read(b"a\n\n").read(b"").build();
         let mut reader = EventReader::new(mock);
         let read = reader.read_block().await.unwrap();

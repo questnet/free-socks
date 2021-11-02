@@ -4,7 +4,7 @@ use anyhow::{bail, Result};
 
 #[derive(Clone, Debug)]
 pub struct ApiResponse {
-    pub text: String,
+    pub content: Vec<u8>,
 }
 
 impl FromMessage for ApiResponse {
@@ -13,7 +13,7 @@ impl FromMessage for ApiResponse {
         if let Some(content) = message.content {
             // TODO: Can we actually assume this is always UTF-8? And should we fail if not.
             Ok(Self {
-                text: content.into_string()?,
+                content: content.into_data(),
             })
         } else {
             bail!("Seen api/response Content-Type, but no content")

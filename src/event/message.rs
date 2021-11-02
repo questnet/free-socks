@@ -212,4 +212,8 @@ impl Content {
     pub fn into_string(self) -> Result<String> {
         Ok(String::from_utf8(self.data)?)
     }
+
+    pub fn into_data(self) -> Vec<u8> {
+        self.data
+    }
 }

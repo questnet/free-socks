@@ -3,12 +3,13 @@
 
 mod event;
 mod inbound_socket;
+pub mod query;
 
 //
 // Exports
 //
 
-pub use event::message::{Content, Message, Header, Headers};
+pub use event::message::{Content, Header, Headers, Message};
 pub use event::ty::EventType;
 pub use event::FromMessage;
 pub use inbound_socket::InboundSocket;
