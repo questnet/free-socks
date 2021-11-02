@@ -18,9 +18,19 @@ impl Table {
         let map = value
             .as_object()
             .ok_or_else(|| anyhow!("Expected Object"))?;
-        let rows = map
-            .get("rows")
-            .ok_or_else(|| anyhow!("Expected `rows` JSON member"))?;
+        let row_count = map
+            .get("row_count")
+            .ok_or_else(|| anyhow!("Expected `row_count` JSON member"))?;
+        let no_rows = Value::Array(Vec::new());
+        let rows = {
+            if row_count == 0 {
+                // JSON array does not contain `rows` if `row_count` is 0
+                &no_rows
+            } else {
+                map.get("rows")
+                    .ok_or_else(|| anyhow!("Expected `rows` JSON member"))?
+            }
+        };
         let rows = rows
             .as_array()
             .ok_or_else(|| anyhow!("Expected `rows` to be a JSON array"))?;
