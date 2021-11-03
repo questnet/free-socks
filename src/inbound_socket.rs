@@ -34,6 +34,7 @@ use uuid::Uuid;
 
 const BUFFER_SIZE: usize = 0x4000;
 
+#[derive(Debug)]
 pub struct InboundSocket {
     driver_sender: mpsc::Sender<DriverMessage>,
     reader: JoinHandle<Result<()>>,
