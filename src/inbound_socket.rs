@@ -138,9 +138,17 @@ impl InboundSocket {
         self.command(format!("auth {}", password.as_ref())).await
     }
 
-    /// All channels in form of a [`QueryTable`].
-    pub async fn channels(&self) -> Result<query::Table> {
-        let result = self.api("show channels as json").await?;
+    /// Get all channels in form of a [`QueryTable`].
+    pub async fn channels(&self, like: impl Into<Option<&str>>) -> Result<query::Table> {
+        let like = like.into();
+        let result = match like {
+            Some(like) => {
+                let like = validate_and_escape_like_literal(like)?;
+                self.api(format!("show channels like {} as json", like))
+                    .await?
+            }
+            None => self.api("show channels as json").await?,
+        };
         Ok(query::Table::from_json(result.content.as_ref())?)
     }
 
@@ -149,6 +157,40 @@ impl InboundSocket {
         let result = self.api("show channels count as json").await?;
         Ok(query::Count::from_json(result.content.as_ref())?.into())
     }
+}
+
+fn validate_and_escape_like_literal(str: &str) -> Result<String> {
+    if str.contains('\'') || str.contains(';') {
+        bail!("'like' strings can not contain `'` or `;`");
+    }
+
+    escape_string_literal(str)
+}
+
+/// Escape all characters.
+///
+/// see `cleanup_separated_string()` and `unescape_char()` in `switch_util.c`.
+fn escape_string_literal(str: &str) -> Result<String> {
+    let mut result = Vec::with_capacity(str.len() + 8);
+
+    // This should be UTF-8 safe. the most significant bit is always set for extension bytes that
+    // are part of an encoded unicode character.
+    str.as_bytes().iter().copied().for_each(|c| {
+        let as_is = &[c];
+        let escaped: &[u8] = match c {
+            b'\'' => b"\\'",
+            b'"' => b"\\\"",
+            b'\n' => b"\\n",
+            b'\r' => b"\\r",
+            b'\t' => b"\\t",
+            b' ' => b"\\s",
+            _ => as_is,
+        };
+
+        result.extend(escaped);
+    });
+
+    Ok(String::from_utf8(result)?)
 }
 
 /// "Layer 2" inbound socket send functions. Full error handling.
