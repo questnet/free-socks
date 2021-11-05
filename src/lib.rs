@@ -3,7 +3,7 @@
 
 mod event;
 mod hangup_cause;
-mod inbound_socket;
+mod event_socket;
 pub mod query;
 
 //
@@ -16,7 +16,7 @@ pub use event::{
     FromMessage,
 };
 pub use hangup_cause::HangupCause;
-pub use inbound_socket::InboundSocket;
+pub use event_socket::EventSocket;
 
 //
 // Tools

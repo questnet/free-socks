@@ -36,13 +36,13 @@ use uuid::Uuid;
 const BUFFER_SIZE: usize = 0x4000;
 
 #[derive(Debug)]
-pub struct InboundSocket {
+pub struct EventSocket {
     driver_sender: mpsc::Sender<DriverMessage>,
     reader: JoinHandle<Result<()>>,
     driver: JoinHandle<Result<Option<DisconnectNotice>>>,
 }
 
-impl Drop for InboundSocket {
+impl Drop for EventSocket {
     fn drop(&mut self) {
         self.reader.abort();
         self.driver.abort();
@@ -51,8 +51,8 @@ impl Drop for InboundSocket {
 
 const MAX_QUEUE_SIZE: usize = 256;
 
-impl InboundSocket {
-    pub async fn connect(endpoint: impl ToSocketAddrs) -> Result<InboundSocket> {
+impl EventSocket {
+    pub async fn connect(endpoint: impl ToSocketAddrs) -> Result<EventSocket> {
         let (driver_sender, driver_rx) = mpsc::channel(MAX_QUEUE_SIZE);
 
         let (tcp_receive, tcp_write) = {
@@ -110,7 +110,7 @@ impl InboundSocket {
             }
         });
 
-        let socket = InboundSocket {
+        let socket = EventSocket {
             reader,
             driver,
             driver_sender,
@@ -131,7 +131,7 @@ async fn dispatch_events(
 }
 
 /// "Layer 3" inbound socket commands. Concrete commands, full error handling and result conversion.
-impl InboundSocket {
+impl EventSocket {
     /// Authenticate with a password.
     ///
     /// Returns the info string attached to the reply, if any.
@@ -221,7 +221,7 @@ fn escape_argument(str: impl AsRef<str>) -> Result<String> {
 }
 
 /// "Layer 2" inbound socket send functions. Full error handling.
-impl InboundSocket {
+impl EventSocket {
     /// Sends a blocking command.
     ///
     /// These all commands except `api` commands. These are expected to return a `Reply-Text`
@@ -254,7 +254,7 @@ impl InboundSocket {
 }
 
 /// "Layer 1" inbound socket send function, no support for protocol error handling.
-impl InboundSocket {
+impl EventSocket {
     /// Send a blocking command to FreeSWITCH.
     ///
     /// Don't use `bgapi` here. If so, this function may not return or screws up the internal state.
