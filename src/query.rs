@@ -92,7 +92,8 @@ mod tests {
     use super::Table;
 
     #[test]
-    fn row_count_0_and_no_rows() {
-        let table = Table::from_json(br#"{"row_count":0}"#).is_ok();
+    fn row_count_0_and_no_rows_returns_an_empty_table() {
+        let table = Table::from_json(br#"{"row_count":0}"#).unwrap();
+        assert!(table.rows.is_empty())
     }
 }
