@@ -2,6 +2,7 @@
 #![allow(unstable_name_collisions)]
 
 mod event;
+mod hangup_cause;
 mod inbound_socket;
 pub mod query;
 
@@ -9,9 +10,12 @@ pub mod query;
 // Exports
 //
 
-pub use event::message::{Content, Header, Headers, Message};
-pub use event::ty::EventType;
-pub use event::FromMessage;
+pub use event::{
+    message::{Content, Header, Headers, Message},
+    ty::EventType,
+    FromMessage,
+};
+pub use hangup_cause::HangupCause;
 pub use inbound_socket::InboundSocket;
 
 //

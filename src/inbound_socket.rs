@@ -9,6 +9,7 @@
 //! sender push both to the same queue which gets processed by a driver.
 use crate::{
     event::{content_types, ApiResponse, AuthRequest, CommandReply, DisconnectNotice, ReplyText},
+    hangup_cause::HangupCause,
     query, sequence, Content, FromMessage, Headers, Message, LF,
 };
 use anyhow::{anyhow, bail, Context, Result};
