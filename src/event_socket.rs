@@ -236,7 +236,10 @@ impl EventSocket {
         let response = self.send(cmd).await?;
         match CommandReply::from_message(response)?.reply_text {
             ReplyText::Ok(info) => Ok(info),
-            ReplyText::Err(info) => bail!("Command `{}` failed: {:?}", cmd, info),
+            ReplyText::Err(info) => {
+                let info = info.map(|info| ": ".to_owned() + &info).unwrap_or_default();
+                bail!("Command `{}` failed{}", cmd, info)
+            }
         }
     }
 
