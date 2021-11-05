@@ -1,6 +1,6 @@
 use strum::{Display, EnumString};
 
-/// https://freeswitch.org/confluence/display/FREESWITCH/Event+List
+/// <https://freeswitch.org/confluence/display/FREESWITCH/Event+List>
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Display, EnumString)]
 #[strum(serialize_all = "shouty_snake_case")]
 pub enum EventType {

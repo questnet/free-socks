@@ -139,7 +139,7 @@ impl InboundSocket {
         self.command(format!("auth {}", password.as_ref())).await
     }
 
-    /// Get all channels in form of a [`QueryTable`].
+    /// Get all channels in form of a [`query::Table`].
     pub async fn channels(&self, like: impl Into<Option<&str>>) -> Result<query::Table> {
         let like = like.into();
         let result = match like {
