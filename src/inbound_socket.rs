@@ -153,6 +153,31 @@ impl InboundSocket {
         Ok(query::Table::from_json(result.content.as_ref())?)
     }
 
+    pub async fn hupall(
+        &self,
+        cause: HangupCause,
+        variable_matches: &[(&str, &str)],
+    ) -> Result<()> {
+        if variable_matches.len() > 5 {
+            // https://github.com/signalwire/freeswitch/blob/v1.10.7/src/mod/applications/mod_commands/mod_commands.c#L6688
+            bail!("`hupall` can match a maximum of 5 variables");
+        }
+
+        let var_args = {
+            let mut args = Vec::new();
+            for (name, value) in variable_matches {
+                args.push(escape_argument(name.to_string())?);
+                args.push(escape_argument(value.to_string())?);
+            }
+            args.join(" ")
+        };
+
+        self.api(format!("hupall {} {}", cause.to_string(), var_args))
+            .await?;
+
+        Ok(())
+    }
+
     /// The number of channels.
     pub async fn channels_count(&self) -> Result<usize> {
         let result = self.api("show channels count as json").await?;
@@ -165,13 +190,14 @@ fn validate_and_escape_like_literal(str: &str) -> Result<String> {
         bail!("'like' strings can not contain `'` or `;`");
     }
 
-    escape_string_literal(str)
+    escape_argument(str)
 }
 
 /// Escape all characters.
 ///
 /// see `cleanup_separated_string()` and `unescape_char()` in `switch_util.c`.
-fn escape_string_literal(str: &str) -> Result<String> {
+fn escape_argument(str: impl AsRef<str>) -> Result<String> {
+    let str = str.as_ref();
     let mut result = Vec::with_capacity(str.len() + 8);
 
     // This should be UTF-8 safe. the most significant bit is always set for extension bytes that
