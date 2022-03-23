@@ -57,20 +57,20 @@ impl EventSocket {
 
         let (tcp_receive, tcp_write) = {
             let tcp = TcpStream::connect(endpoint).await?;
-            // Send packages out as soon as possible.
+            // Send network packets out as soon as possible.
             tcp.set_nodelay(true)?;
             tcp.into_split()
         };
 
         let mut reader = EventReader::new(tcp_receive);
 
-        // Wait for the initial auth/request event.
+        // Wait for the initial `auth/request`.
         {
-            let initial_event = reader
+            let initial_request = reader
                 .read_event()
                 .await
-                .context("Reading the initial event")?;
-            AuthRequest::from_message(initial_event).context("Expecting auth/request")?;
+                .context("Reading the initial request")?;
+            AuthRequest::from_message(initial_request).context("Expecting auth/request")?;
         }
 
         // Spawn the event reader.
