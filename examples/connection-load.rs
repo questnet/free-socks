@@ -1,9 +1,8 @@
-//! Load tests connections.
+//! Load tests connection attempts to FreeSWITCH.
 
 use anyhow::Result;
 use clap::Parser;
 use free_socks::EventSocket;
-use std::io::{self, Write};
 use std::time::{Duration, Instant};
 use tokio::time;
 
