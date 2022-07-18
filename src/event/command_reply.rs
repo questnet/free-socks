@@ -1,5 +1,5 @@
 use super::content_types;
-use crate::{FromMessage, Message, ThenSome};
+use crate::{FromMessage, Message};
 use anyhow::Result;
 use regex::Regex;
 use std::str::FromStr;

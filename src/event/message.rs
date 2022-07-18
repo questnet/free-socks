@@ -1,4 +1,4 @@
-use crate::{sequence, ThenSome, LF};
+use crate::{sequence, LF};
 use anyhow::{anyhow, bail, Result};
 use mime::Mime;
 use std::{
