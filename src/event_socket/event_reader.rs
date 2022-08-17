@@ -1,7 +1,7 @@
-use std::mem;
-
+//! The event reader reads messages from the read side of the FreeSWITCH event socket.
 use crate::{sequence, Content, Headers, Message, LF};
 use anyhow::{bail, Result};
+use std::mem;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 const BUFFER_SIZE: usize = 0x4000;
@@ -41,11 +41,11 @@ impl<R: AsyncRead + Unpin> EventReader<R> {
 
     async fn read_headers(&mut self) -> Result<Headers> {
         let block = self.read_block().await?;
-        Ok(Headers::parse(block)?)
+        Headers::parse(block)
     }
 
-    /// Reads until the given bytes have been received. `len` may be 0 which immediately returns an
-    /// empty slice.
+    /// Reads until the given bytes have been received. `len` may be `0` which immediately returns
+    /// an empty slice.
     async fn read_data(&mut self, len: usize) -> Result<&[u8]> {
         self.drain_read_buffer();
 
@@ -90,7 +90,7 @@ impl<R: AsyncRead + Unpin> EventReader<R> {
         }
     }
 
-    /// Remove the already consumed data from the read buffer.
+    /// Remove the consumed data from the read buffer.
     fn drain_read_buffer(&mut self) {
         self.read_buffer.drain(0..self.read_consumed);
         self.read_consumed = 0;

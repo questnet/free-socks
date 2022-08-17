@@ -2,7 +2,7 @@
 //!
 //! ADR:
 //! Initially we thought about creating a design that polls the events and the commands at the same
-//! time, but it turned out that select! not simple to use on futures that are not cancellation safe
+//! time, but it turned out that select! not simple to use on futures that are not cancel safe
 //! (which our event reader isn't, because of the intermediate buffers).
 //!
 //! To remedy that, a channel mpsc queue based approach was used. The event reader and the command
@@ -13,42 +13,40 @@ use crate::{
     query, FromMessage, Message,
 };
 use anyhow::{bail, Context, Result};
-use driver::{Command, Driver, DriverMessage, ProcessingResult};
+use driver::{Command, Driver, ProcessingResult};
 use event_reader::EventReader;
-use log::{debug, error};
-use std::str;
+use log::{debug, error, info};
+use std::{fmt, str, sync::Mutex};
+use strum::Display;
 use tokio::{
     net::{tcp::OwnedReadHalf, TcpStream, ToSocketAddrs},
-    spawn,
+    select,
     sync::{
-        mpsc::{self, Sender},
+        mpsc::{self, Receiver, Sender},
         oneshot,
     },
-    task::JoinHandle,
 };
 
 mod driver;
 mod event_reader;
 
-#[derive(Debug)]
+/// A connected FreeSWITCH event socket.
 pub struct EventSocket {
-    driver_sender: mpsc::Sender<DriverMessage>,
-    reader: JoinHandle<Result<()>>,
-    driver: JoinHandle<Result<Option<DisconnectNotice>>>,
-}
-
-impl Drop for EventSocket {
-    fn drop(&mut self) {
-        self.reader.abort();
-        self.driver.abort();
-    }
+    state: Mutex<State>,
 }
 
 const MAX_QUEUE_SIZE: usize = 256;
 
+#[derive(Clone, PartialEq, Eq, Debug, Display)]
+pub enum ConnectionState {
+    Connected,
+    Disconnected(Option<DisconnectNotice>),
+}
+
 impl EventSocket {
     pub async fn connect(endpoint: impl ToSocketAddrs) -> Result<EventSocket> {
-        let (driver_sender, driver_rx) = mpsc::channel(MAX_QUEUE_SIZE);
+        let (message_sender, message_receiver) = mpsc::channel(MAX_QUEUE_SIZE);
+        let (command_sender, command_receiver) = mpsc::channel(MAX_QUEUE_SIZE);
 
         let (tcp_receive, tcp_write) = {
             let tcp = TcpStream::connect(endpoint).await?;
@@ -68,61 +66,97 @@ impl EventSocket {
             AuthRequest::from_message(initial_request).context("Expecting auth/request")?;
         }
 
-        // Spawn the event reader.
         let reader = {
-            let driver_sender = driver_sender.clone();
-            spawn(async move {
-                let r = dispatch_events(&mut reader, driver_sender).await;
+            async move {
+                let r = read_and_dispatch_messages(reader, message_sender).await;
                 if let Err(ref e) = r {
-                    error!("Reader loop crashed: {}", e);
+                    error!("Reader loop crashed: {e}");
                 }
                 debug!("Ending reader loop");
                 r
-            })
-        };
-
-        // Spawn the driver.
-        let driver = spawn(async move {
-            let mut driver = Driver::new(tcp_write);
-            let mut driver_rx = driver_rx;
-            loop {
-                let message = driver_rx.recv().await;
-                if let Some(message) = message {
-                    use ProcessingResult::*;
-                    match driver.process_message(message).await? {
-                        Continue => {
-                            continue;
-                        }
-                        Disconnected(notice) => {
-                            debug!("Received disconnect notice: {}", notice);
-                            return Ok(Some(notice));
-                        }
-                    }
-                } else {
-                    debug!("Receiver channel got closed (all senders dropped)");
-                    return Ok(None);
-                }
             }
-        });
-
-        let socket = EventSocket {
-            reader,
-            driver,
-            driver_sender,
         };
 
-        Ok(socket)
+        // Running the driver loop.
+        // The driver is either getting messages from the event receiver. Or external commands.
+        let driver = async move {
+            let driver = Driver::new(tcp_write);
+            match dispatch_commands_and_messages(command_receiver, message_receiver, driver).await {
+                Ok(()) => {}
+                Err(_) => {}
+            }
+        };
+
+        // We don't need to use the JoinHandles. The tasks will terminate as soon the
+        // command sender / EventSocket gets dropped.
+        tokio::spawn(reader);
+        tokio::spawn(driver);
+
+        Ok(EventSocket { command_sender })
+    }
+
+    /// Returns the current connection state of the event socket. This is initially connected but
+    /// may change at any time to disconnected.
+    ///
+    /// This is useful to find out why a command failed and if it makes sense to reconnect.
+    pub fn connection_state(&self) -> ConnectionState {
+        use State::*;
+        match *self.state.lock().expect("Poisoned mutex") {
+            Connected(_) => ConnectionState::Connected,
+            Disconnected(notice) => ConnectionState::Disconnected(notice),
+        }
     }
 }
 
-async fn dispatch_events(
-    reader: &mut EventReader<OwnedReadHalf>,
-    driver: Sender<DriverMessage>,
-) -> Result<()> {
+async fn read_and_dispatch_messages(
+    mut reader: EventReader<OwnedReadHalf>,
+    message_sender: Sender<Message>,
+) -> Result<(), anyhow::Error> {
     loop {
         let event = reader.read_event().await?;
-        driver.send(DriverMessage::Event(event)).await?;
+        message_sender.send(event).await?;
     }
+}
+
+async fn dispatch_commands_and_messages(
+    mut command_receiver: Receiver<Command>,
+    mut message_receiver: Receiver<Message>,
+    mut driver: Driver,
+) -> Result<()> {
+    loop {
+        select! {
+            message = message_receiver.recv() => {
+                if let Some(message) = message {
+                    use ProcessingResult::*;
+                    match driver.process_message(message)? {
+                        Continue => {},
+                        Disconnected(notice) =>
+                        {
+                            debug!("Received disconnect notice: {notice}");
+                            return Ok(());
+                        }
+                    }
+                } else {
+                    info!("Message senders were dropped, ending dispatcher.");
+                    return Ok(())
+                }
+            }
+            command = command_receiver.recv() => {
+                if let Some(command) = command {
+                    driver.execute_command(command).await?;
+                } else {
+                    info!("Command senders were dropped, ending dispatcher.");
+                    return Ok(())
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+enum State {
+    Connected(Sender<Command>),
+    Disconnected(Option<DisconnectNotice>),
 }
 
 /// "Layer 3" inbound socket commands. Concrete commands, full error handling and result conversion.
@@ -140,12 +174,12 @@ impl EventSocket {
         let result = match like {
             Some(like) => {
                 let like = validate_and_escape_like_literal(like)?;
-                self.api(format!("show channels like {} as json", like))
+                self.api(format!("show channels like {like} as json"))
                     .await?
             }
             None => self.api("show channels as json").await?,
         };
-        Ok(query::Table::from_json(result.content.as_ref())?)
+        query::Table::from_json(result.content.as_ref())
     }
 
     pub async fn hupall(
@@ -161,14 +195,13 @@ impl EventSocket {
         let var_args = {
             let mut args = Vec::new();
             for (name, value) in variable_matches {
-                args.push(escape_argument(name.to_string())?);
-                args.push(escape_argument(value.to_string())?);
+                args.push(escape_argument(name)?);
+                args.push(escape_argument(value)?);
             }
             args.join(" ")
         };
 
-        self.api(format!("hupall {} {}", cause.to_string(), var_args))
-            .await?;
+        self.api(format!("hupall {} {}", cause, var_args)).await?;
 
         Ok(())
     }
@@ -233,7 +266,7 @@ impl EventSocket {
             ReplyText::Ok(info) => Ok(info),
             ReplyText::Err(info) => {
                 let info = info.map(|info| ": ".to_owned() + &info).unwrap_or_default();
-                bail!("Command `{}` failed{}", cmd, info)
+                bail!("Command `{cmd}` failed{}", info)
             }
         }
     }
@@ -246,8 +279,8 @@ impl EventSocket {
         let cmd = cmd.as_ref();
         // TODO: Don't support cmd with LFs
         // TODO: encode cmd?
-        let message = self.send(format!("api {}", cmd)).await?;
-        Ok(ApiResponse::from_message(message)?)
+        let message = self.send(format!("api {cmd}")).await?;
+        ApiResponse::from_message(message)
     }
 }
 
@@ -273,9 +306,14 @@ impl EventSocket {
 
     /// Sends a command.
     async fn send_command(&self, command: Command) -> Result<()> {
-        Ok(self
-            .driver_sender
-            .send(DriverMessage::Command(command))
-            .await?)
+        
+        Ok(self.command_sender.send(command).await?
+    }
+}
+
+#[cfg(test)]
+mod test {
+    fn after_closing_the_socket_the_state_is_disconnected() {
+        todo!()
     }
 }

@@ -40,7 +40,7 @@ pub fn content_types() -> &'static ContentTypes {
     })
 }
 
-#[derive(Clone, Debug, Display)]
+#[derive(Clone, PartialEq, Eq, Debug, Display)]
 pub struct DisconnectNotice(String);
 
 impl FromMessage for DisconnectNotice {

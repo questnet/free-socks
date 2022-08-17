@@ -13,12 +13,6 @@ use tokio::{
 use uuid::Uuid;
 
 #[derive(Debug)]
-pub enum DriverMessage {
-    Event(Message),
-    Command(Command),
-}
-
-#[derive(Debug)]
 pub enum Command {
     Blocking {
         cmd: String,
@@ -62,30 +56,28 @@ impl Driver {
         Self { writer, state }
     }
 
-    pub async fn process_message(&mut self, message: DriverMessage) -> Result<ProcessingResult> {
+    pub async fn execute_command(&mut self, command: Command) -> Result<()> {
         use self::Command::*;
-        use DriverMessage::*;
-        match message {
-            Event(e) => self.process_event(e),
-            Command(Blocking {
+        match command {
+            Blocking {
                 cmd,
                 message,
                 responder,
-            }) => {
+            } => {
                 self.state.blocking.push_back(responder);
                 self.send_blocking(&cmd, &message).await?;
-                Ok(ProcessingResult::Continue)
+                Ok(())
             }
-            Command(Background { cmd, responder }) => {
+            Background { cmd, responder } => {
                 let uuid = Uuid::new_v4();
                 self.state.background.insert(uuid, responder);
                 self.send_background(&cmd, uuid).await?;
-                Ok(ProcessingResult::Continue)
+                Ok(())
             }
-            Command(Application {
+            Application {
                 cmd: _,
                 responder: _,
-            }) => {
+            } => {
                 todo!("Unsupported");
             }
         }
@@ -121,7 +113,7 @@ impl Driver {
         todo!()
     }
 
-    fn process_event(&mut self, message: Message) -> Result<ProcessingResult> {
+    pub fn process_message(&mut self, message: Message) -> Result<ProcessingResult> {
         trace!("Received: {:?}", message);
         // For now we don't support messages without a content type (are there any?).
         if let Some(content_type) = message.content_type()? {
