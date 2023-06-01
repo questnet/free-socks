@@ -1,6 +1,7 @@
 // `then_some`
 #![allow(unstable_name_collisions)]
 
+mod client;
 mod event;
 mod event_socket;
 mod hangup_cause;
@@ -10,6 +11,7 @@ pub mod query;
 // Exports
 //
 
+pub use client::Client;
 pub use event::{
     message::{Content, Header, Headers, Message},
     ty::EventType,
