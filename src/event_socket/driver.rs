@@ -25,10 +25,12 @@ pub enum Command {
         message: Message,
         responder: oneshot::Sender<Message>,
     },
+    #[allow(unused)]
     Background {
         cmd: String,
         responder: oneshot::Sender<Message>,
     },
+    #[allow(unused)]
     Application {
         cmd: String,
         responder: mpsc::Sender<Message>,
@@ -45,6 +47,7 @@ pub struct Driver {
 struct DriverState {
     blocking: VecDeque<oneshot::Sender<Message>>,
     background: HashMap<Uuid, oneshot::Sender<Message>>,
+    #[allow(unused)]
     application: HashMap<Uuid, mpsc::Sender<Message>>,
 }
 
@@ -113,11 +116,12 @@ impl Driver {
         Ok(())
     }
 
-    async fn send_background(&mut self, cmd: &str, uuid: Uuid) -> Result<()> {
+    async fn send_background(&mut self, _cmd: &str, _uuid: Uuid) -> Result<()> {
         todo!()
     }
 
-    async fn send(&mut self, cmd: &str, attachment: Message) -> Result<()> {
+    #[allow(unused)]
+    async fn send(&mut self, _cmd: &str, _attachment: Message) -> Result<()> {
         todo!()
     }
 

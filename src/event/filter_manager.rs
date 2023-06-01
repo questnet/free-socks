@@ -1,3 +1,4 @@
+#![allow(unused)]
 use super::ty::EventType;
 use std::collections::{HashMap, HashSet};
 
