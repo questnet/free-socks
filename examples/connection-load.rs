@@ -35,8 +35,8 @@ async fn main() -> Result<()> {
     loop {
         let endpoint = format!("{}:{}", args.endpoint, args.port);
         let begin_connecting = Instant::now();
-        let event_socket = EventSocket::connect(&endpoint).await?;
-        event_socket.auth(&args.password).await?;
+        let event_socket = EventSocket::connect(&endpoint, Duration::from_secs(5)).await?;
+        event_socket.client().auth(&args.password).await?;
         println!("Time to connect: {:?}", Instant::now() - begin_connecting);
         attempts_made += 1;
         let time_of_next_attempt = start_time + (Duration::from_secs(1) * attempts_made / args.cps);
